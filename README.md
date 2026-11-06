@@ -4,10 +4,13 @@ A Taskwarrior on-exit hook that keeps a task's note in [nb](https://github.com/x
 
 - **Ask for a note:** annotate a task with a bare `nb:` (or `nb: <notebook>:`). The hook makes
   the task's note (in `tasknotes`, or the notebook you named) and swaps the request for the link,
-  e.g. `nb: tasknotes:order-the-tiles-1a2b3c4d.note.md`. It works from any client (the CLI,
+  e.g. `nb: tasknotes:order-the-tiles-1a2b3c4d.note.md`. A notebook that doesn't exist leaves
+  the request in place, and the hook says why. It works from any client (the CLI,
   tw-web, a phone) with nb on the same station, online or not.
 - **Keep its status:** a task that links a note by path has its status (pending, completed, …)
   copied into the note's frontmatter whenever the task changes.
+
+How it fits with syncing, nb-web, tw-web and a phone: [Task notes](https://github.com/linuxcaffe/tw-mobilize/blob/main/docs/task-notes.md).
 
 The work is done by nb-plugins' `tw` plugin (`nb tw note`, `nb tw status`); this hook only calls
 it. Tasks without an `nb:` annotation, and numeric links like tw2nb's `nb: tasks:42`, cost nothing.
