@@ -16,11 +16,11 @@ it. Tasks without an `nb:` annotation, and numeric links like tw2nb's `nb: tasks
 
 ```
 tw -I nbnotes
-nb plugins install https://raw.githubusercontent.com/linuxcaffe/nb-plugins/main/tw.nb-plugin
 ```
 
-Without nb the hook does nothing. Without the plugin it says once what's missing and how to
-install it. It never fails a task command; problems go to stderr.
+With nb on the station, that also installs the nb plugin `tw` that does the work. Without nb the
+hook does nothing, and the installer names the command to run once nb is there. If the plugin
+goes missing later, the hook says so once, with the command. It never fails a task command; problems go to stderr.
 
 ## History
 

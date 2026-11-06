@@ -87,8 +87,10 @@ def test_needs_no_tw2nb(env):
 
 
 def _install(home, action='install'):
+    """No nb on PATH: the real one would fetch the plugin over the network."""
+    path = ':'.join(d for d in ('/usr/bin', '/bin') if not (Path(d) / 'nb').exists())
     r = subprocess.run(['bash', str(REPO / 'nbnotes.install'), action], capture_output=True,
-                       text=True, timeout=60, env={'PATH': os.environ['PATH'], 'HOME': str(home)})
+                       text=True, timeout=60, env={'PATH': path, 'HOME': str(home)})
     assert r.returncode == 0, r.stdout + r.stderr
     return r.stdout
 
@@ -105,9 +107,69 @@ def test_install_takes_the_place_of_tw2nbs_old_on_exit(tmp_path):
     assert (hooks / 'on-modify_tw2nb.py').exists()                   # the rest of tw2nb stays
     assert 'nbnotes does its job now' in out
     manifest = (home / '.task' / 'config' / '.tw_manifest').read_text()
-    assert manifest.count('nbnotes|1.0.0|') == 1
+    assert len([l for l in manifest.splitlines() if l.startswith('nbnotes|')]) == 1
     _install(home)
     assert (home / '.task' / 'config' / '.tw_manifest').read_text().count('nbnotes|') == 1
     _install(home, 'remove')
     assert not (hooks / 'on-exit_nbnotes.py').exists()
     assert 'nbnotes|' not in (home / '.task' / 'config' / '.tw_manifest').read_text()
+
+
+# ── 1.0.1: the installer installs the nb-plugin tw (djp 2026-11-05: "any part of the program that
+# needs an nb-plugin should a) install it quietly, or b) install it with a prompt") ─────────────
+
+def _fake_nb(tmp_path, log, works=True):
+    bin_ = tmp_path / 'bin'
+    bin_.mkdir(exist_ok=True)
+    make = 'mkdir -p "$HOME/.nb/.plugins" && echo "# tw" > "$HOME/.nb/.plugins/tw.nb-plugin"' if works else 'exit 1'
+    (bin_ / 'nb').write_text(f'#!/bin/sh\necho "$*" >> "{log}"\n'
+                             f'if [ "$1 $2" = "plugins install" ]; then {make}; fi\n')
+    (bin_ / 'nb').chmod(0o755)
+    return bin_
+
+
+def _install_with(tmp_path, bin_):
+    home = tmp_path / 'home'
+    (home / '.task' / 'hooks').mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(['bash', str(REPO / 'nbnotes.install'), 'install'], capture_output=True, text=True,
+                       timeout=60, env={'PATH': f"{bin_}:/usr/bin:/bin", 'HOME': str(home)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    return home, r.stdout
+
+
+URL = 'https://raw.githubusercontent.com/linuxcaffe/nb-plugins/main/tw.nb-plugin'
+
+
+def test_install_installs_the_plugin_when_its_missing(tmp_path):
+    log = tmp_path / 'nb-calls'
+    home, out = _install_with(tmp_path, _fake_nb(tmp_path, log))
+    assert log.read_text().splitlines() == [f'plugins install {URL}']
+    assert (home / '.nb' / '.plugins' / 'tw.nb-plugin').is_file()
+    assert 'Installed the nb-plugin tw' in out
+
+
+def test_install_keeps_a_plugin_already_there(tmp_path):
+    log = tmp_path / 'nb-calls'
+    bin_ = _fake_nb(tmp_path, log)
+    plugins = tmp_path / 'home' / '.nb' / '.plugins'
+    plugins.mkdir(parents=True)
+    dev = tmp_path / 'dev-tw.nb-plugin'
+    dev.write_text('# dev copy\n')
+    (plugins / 'tw.nb-plugin').symlink_to(dev)             # a station's link into the repo
+    _, out = _install_with(tmp_path, bin_)
+    assert not log.exists() and dev.read_text() == '# dev copy\n'
+    assert 'already installed' in out
+
+
+def test_install_without_a_network_says_how_and_still_installs_the_hook(tmp_path):
+    log = tmp_path / 'nb-calls'
+    home, out = _install_with(tmp_path, _fake_nb(tmp_path, log, works=False))
+    assert (home / '.task' / 'hooks' / 'on-exit_nbnotes.py').exists()
+    assert "couldn't install the nb-plugin tw" in out and f'nb plugins install {URL}' in out
+
+
+def test_install_without_nb_names_the_command_for_later(tmp_path):
+    bin_ = tmp_path / 'empty'
+    bin_.mkdir()
+    home, out = _install_with(tmp_path, bin_)
+    assert 'nb not found' in out and f'nb plugins install {URL}' in out

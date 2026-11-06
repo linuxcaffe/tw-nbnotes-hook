@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 on-exit_nbnotes.py - Task notes in nb: make the note an `nb:` asks for, keep its status
-Version: 1.0.0
+Version: 1.0.1
 
 After Taskwarrior has written its changes:
 - a task carrying an nb: request (a bare `nb:`, or `nb: <notebook>:`) gets its note:
