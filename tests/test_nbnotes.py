@@ -125,6 +125,16 @@ def _fake_nb(tmp_path, log, works=True):
     (bin_ / 'nb').write_text(f'#!/bin/sh\necho "$*" >> "{log}"\n'
                              f'if [ "$1 $2" = "plugins install" ]; then {make}; fi\n')
     (bin_ / 'nb').chmod(0o755)
+    # curl stands in for the network: a file in remote/ is served by its name, else it fails
+    remote = tmp_path / 'remote'
+    remote.mkdir(exist_ok=True)
+    (bin_ / 'curl').write_text('#!/bin/sh\n'
+                               'out=""; url=""\n'
+                               'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -*) shift;; *) url="$1"; shift;; esac; done\n'
+                               f'src="{remote}/$(basename "$url")"\n'
+                               '[ -f "$src" ] || exit 22\n'
+                               '[ -n "$out" ] && cp "$src" "$out" || cat "$src"\n')
+    (bin_ / 'curl').chmod(0o755)
     return bin_
 
 
@@ -158,7 +168,7 @@ def test_install_keeps_a_plugin_already_there(tmp_path):
     (plugins / 'tw.nb-plugin').symlink_to(dev)             # a station's link into the repo
     _, out = _install_with(tmp_path, bin_)
     assert not log.exists() and dev.read_text() == '# dev copy\n'
-    assert 'already installed' in out
+    assert 'a link, left as it is' in out
 
 
 def test_install_without_a_network_says_how_and_still_installs_the_hook(tmp_path):
@@ -193,3 +203,40 @@ def test_a_request_on_a_completed_task_still_makes_its_note(env):
     env.task(uuid, 'done')
     env.hook(HOOK, env.export(uuid))
     assert len(list((env.nb_dir / 'tasknotes').glob(f'*{uuid[:8]}.note.md'))) == 1
+
+
+
+# ── 1.1.1: an ordinary copy of the plugin is brought up to date (djp 2026-11-05: the phone's was
+# older than yoga's; "already installed" never changed it). A link (a dev checkout's) never is. ──
+
+def _have_plugin(tmp_path, text):
+    d = tmp_path / 'home' / '.nb' / '.plugins'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'tw.nb-plugin').write_text(text)
+    (d / 'tw.nb-plugin').chmod(0o755)
+    return d / 'tw.nb-plugin'
+
+
+def test_install_updates_an_old_copy(tmp_path):
+    log = tmp_path / 'nb-calls'
+    bin_ = _fake_nb(tmp_path, log)
+    (tmp_path / 'remote' / 'tw.nb-plugin').write_text('# tw new\n')
+    old = _have_plugin(tmp_path, '# tw old\n')
+    _, out = _install_with(tmp_path, bin_)
+    assert old.read_text() == '# tw new\n' and old.stat().st_mode & 0o111
+    assert 'Updated the nb-plugin tw' in out and not log.exists()
+
+
+def test_install_leaves_a_current_copy(tmp_path):
+    bin_ = _fake_nb(tmp_path, tmp_path / 'nb-calls')
+    (tmp_path / 'remote' / 'tw.nb-plugin').write_text('# tw\n')
+    cur = _have_plugin(tmp_path, '# tw\n')
+    _, out = _install_with(tmp_path, bin_)
+    assert cur.read_text() == '# tw\n' and 'nb-plugin tw: up to date' in out
+
+
+def test_install_offline_keeps_the_copy(tmp_path):
+    bin_ = _fake_nb(tmp_path, tmp_path / 'nb-calls')
+    old = _have_plugin(tmp_path, '# tw old\n')
+    _, out = _install_with(tmp_path, bin_)
+    assert old.read_text() == '# tw old\n' and "couldn't check the nb-plugin tw" in out

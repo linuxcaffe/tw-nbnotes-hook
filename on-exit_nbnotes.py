@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 on-exit_nbnotes.py - Task notes in nb: make the note an `nb:` asks for, keep its status
-Version: 1.1.0
+Version: 1.1.1
 
 After Taskwarrior has written its changes:
 - a task carrying an nb: request (a bare `nb:`, or `nb: <notebook>:`) gets its note:
@@ -17,7 +17,7 @@ task notes without tw2nb's archive and journal (the phone).
 on-exit, not on-modify: on-modify runs before the change is written, so the plugin's
 `task export` would still see the old status.
 
-Never fails a task command, and never holds one up for long (1.1.0, djp 2026-11-05: on the
+Never fails a task command, and never holds one up for long (1.1.1, djp 2026-11-05: on the
 phone `nb tw note` takes seconds, and tw-web gives a task command 15): the nb work runs in a
 process of its own, and the hook waits for it at most NBNOTES_WAIT seconds (default 3). Within
 that, its problems come back on stderr as before; after it, they go to ~/.task/logs/nbnotes.log.
