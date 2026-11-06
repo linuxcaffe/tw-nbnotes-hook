@@ -173,3 +173,23 @@ def test_install_without_nb_names_the_command_for_later(tmp_path):
     bin_.mkdir()
     home, out = _install_with(tmp_path, bin_)
     assert 'nb not found' in out and f'nb plugins install {URL}' in out
+
+
+def test_a_request_on_a_deleted_task_makes_no_note(env):
+    """djp 2026-11-05: a bare nb: on a task you delete asks for nothing any more. A linked note
+    still gets the deleted status; a completed task's request is still made (its note keeps it)."""
+    uuid = env.add_task('--', 'Throw it away')
+    env.task(uuid, 'annotate', '--', 'nb:')
+    env.task(uuid, 'delete')
+    r = env.hook(HOOK, env.export(uuid))
+    assert r.returncode == 0
+    assert not list((env.nb_dir / 'tasknotes').glob(f'*{uuid[:8]}*'))
+    assert anns(env, uuid) == ['nb:']
+
+
+def test_a_request_on_a_completed_task_still_makes_its_note(env):
+    uuid = env.add_task('--', 'Done with a note')
+    env.task(uuid, 'annotate', '--', 'nb:')
+    env.task(uuid, 'done')
+    env.hook(HOOK, env.export(uuid))
+    assert len(list((env.nb_dir / 'tasknotes').glob(f'*{uuid[:8]}.note.md'))) == 1

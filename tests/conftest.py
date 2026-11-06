@@ -21,7 +21,8 @@ class Env:
         self.task_dir = root / 'task'
         self.env = {'PATH': os.environ['PATH'], 'HOME': str(self.home), 'NB_DIR': str(self.nb_dir),
                     'NBRC_PATH': str(self.home / '.nbrc'), 'TASKRC': str(self.home / '.taskrc'),
-                    'EDITOR': 'true', 'LANG': os.environ.get('LANG', 'C.UTF-8')}
+                    'EDITOR': 'true', 'LANG': os.environ.get('LANG', 'C.UTF-8'),
+                    'NBNOTES_WAIT': '60', 'TW_TASK_DIR': str(root / 'task')}
 
     def run(self, *args, input='', check=True, timeout=90):
         r = subprocess.run(list(args), capture_output=True, text=True, env=self.env,

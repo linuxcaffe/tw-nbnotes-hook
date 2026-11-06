@@ -15,6 +15,14 @@ How it fits with syncing, nb-web, tw-web and a phone: [Task notes](https://githu
 The work is done by nb-plugins' `tw` plugin (`nb tw note`, `nb tw status`); this hook only calls
 it. Tasks without an `nb:` annotation, and numeric links like tw2nb's `nb: tasks:42`, cost nothing.
 
+## Never in the way
+
+The nb work runs in a process of its own. The task command waits for it at most 3 seconds
+(`NBNOTES_WAIT`): on a desktop the note is there when the command returns, and any problem is
+said at once; on a slow station, such as a phone, the command returns and the note follows a
+moment later, and problems go to `~/.task/logs/nbnotes.log`. A bare `nb:` on a task you delete
+makes no note.
+
 ## Install
 
 ```

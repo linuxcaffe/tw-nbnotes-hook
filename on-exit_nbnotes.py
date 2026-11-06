@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 on-exit_nbnotes.py - Task notes in nb: make the note an `nb:` asks for, keep its status
-Version: 1.0.1
+Version: 1.1.0
 
 After Taskwarrior has written its changes:
 - a task carrying an nb: request (a bare `nb:`, or `nb: <notebook>:`) gets its note:
@@ -17,7 +17,10 @@ task notes without tw2nb's archive and journal (the phone).
 on-exit, not on-modify: on-modify runs before the change is written, so the plugin's
 `task export` would still see the old status.
 
-Never blocks or fails a task command: problems go to stderr only.
+Never fails a task command, and never holds one up for long (1.1.0, djp 2026-11-05: on the
+phone `nb tw note` takes seconds, and tw-web gives a task command 15): the nb work runs in a
+process of its own, and the hook waits for it at most NBNOTES_WAIT seconds (default 3). Within
+that, its problems come back on stderr as before; after it, they go to ~/.task/logs/nbnotes.log.
 """
 import os as _os_timing, time as _time_module
 if _os_timing.environ.get('TW_TIMING'):
@@ -38,6 +41,7 @@ if _os_timing.environ.get('TW_TIMING'):
 
 import os
 import sys
+import time
 from pathlib import Path
 from datetime import datetime
 import json
@@ -115,14 +119,47 @@ def links_a_note(task: dict) -> bool:
                for a in task.get('annotations', []))
 
 
+WAIT_DEFAULT = 3.0     # seconds the task command waits for the note; the rest runs on
+
+
+def _log_path() -> Path:
+    task_dir = Path(os.environ.get('TW_TASK_DIR') or Path.home() / '.task')
+    return task_dir / 'logs' / 'nbnotes.log'
+
+
+def _log(line: str):
+    path = _log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'a') as f:
+            f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {line}\n")
+    except OSError:
+        pass
+
+
+def run_jobs(jobs) -> int:
+    """The nb work, in its own process: `nb tw <cmd> <uuid>` for each job, problems to the log."""
+    nb = shutil.which('nb')
+    for cmd, uuid in jobs:
+        try:
+            r = subprocess.run([nb, 'tw', cmd, uuid], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=300)
+            if r.returncode != 0:
+                _log(f'[nbnotes] nb tw {cmd} {uuid[:8]}: {r.stderr.strip()}')
+        except Exception as e:                       # never let one task stop the others
+            _log(f'[nbnotes] nb tw {cmd} {uuid[:8]}: {e}')
+    return 0
+
+
 def main() -> int:
+    if sys.argv[1:2] == ['--run']:                   # the worker: cmd:uuid pairs
+        return run_jobs([a.split(':', 1) for a in sys.argv[2:]])
     lines = sys.stdin.read().splitlines()
     nb = shutil.which('nb')
     plugin = Path(os.environ.get('NB_DIR') or Path.home() / '.nb') / '.plugins' / 'tw.nb-plugin'
     if not nb:
         return 0        # no nb here: the notes live on another station, nothing to say
-    have_plugin = plugin.exists()
-    seen = set()
+    jobs, seen = [], set()
     for line in lines:
         try:
             task = json.loads(line)
@@ -131,23 +168,49 @@ def main() -> int:
         uuid = task.get('uuid') if isinstance(task, dict) else None
         if not uuid or uuid in seen:
             continue
-        # a request: make the note (it starts with the task's status, so no mirroring needed)
-        cmd = 'note' if has_request(task) else 'status' if links_a_note(task) else None
-        if not cmd:
-            continue
-        if not have_plugin:
-            # never silently: a hook can't ask, so it names the install, once per run
-            print(f'[nbnotes] nb-plugin tw is required for task notes, and is missing here. '
-                  f'Install it: nb plugins install {TW_NB_PLUGIN_URL}', file=sys.stderr)
-            return 0
-        seen.add(uuid)
-        try:
-            r = subprocess.run([nb, 'tw', cmd, uuid], capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL, timeout=60)
-            if r.returncode != 0:
-                print(f'[nbnotes] nb tw {cmd} {uuid[:8]}: {r.stderr.strip()}', file=sys.stderr)
-        except Exception as e:                       # never fail the task command
-            print(f'[nbnotes] nb tw {cmd} {uuid[:8]}: {e}', file=sys.stderr)
+        # a request: make the note (it starts with the task's status, so no mirroring needed),
+        # but never a new note for a task being deleted (djp 2026-11-05: "test link" on s5)
+        if has_request(task):
+            cmd = None if task.get('status') == 'deleted' else 'note'
+        else:
+            cmd = 'status' if links_a_note(task) else None
+        if cmd:
+            seen.add(uuid)
+            jobs.append((cmd, uuid))
+    if not jobs:
+        return 0
+    if not plugin.exists():
+        # never silently: a hook can't ask, so it names the install, once per run
+        print(f'[nbnotes] nb-plugin tw is required for task notes, and is missing here. '
+              f'Install it: nb plugins install {TW_NB_PLUGIN_URL}', file=sys.stderr)
+        return 0
+    try:
+        wait = float(os.environ.get('NBNOTES_WAIT', WAIT_DEFAULT))
+    except ValueError:
+        wait = WAIT_DEFAULT
+    log = _log_path()
+    before = log.stat().st_size if log.exists() else 0
+    try:
+        # its own session, and none of Taskwarrior's pipes: Taskwarrior reads the hook's output
+        # to the end, so a worker holding them would hold the command up all the same
+        worker = subprocess.Popen([sys.executable, os.path.abspath(__file__), '--run',
+                                   *[f'{c}:{u}' for c, u in jobs]],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        print(f'[nbnotes] could not start: {e}', file=sys.stderr)
+        return 0
+    try:
+        worker.wait(timeout=max(wait, 0))
+    except subprocess.TimeoutExpired:
+        return 0        # still working: the note comes a moment later; problems go to the log
+    try:                # done in time: say what went wrong, here and now, as before
+        with open(log) as f:
+            f.seek(before)
+            for line in f.read().splitlines():
+                print(line.split(' ', 1)[-1], file=sys.stderr)
+    except OSError:
+        pass
     return 0
 
 
